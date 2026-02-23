@@ -20,12 +20,12 @@ public class TestController {
         return contactService.obtenerContactoHibrido(nit);
     }
 
-    // Nuevo endpoint para autorizar SharePoint y listar carpetas que Si lo logramos somos unos cracks increibles
+    // Nuevo endpoint para autorizar SharePoint en modo Daemon
     @GetMapping("/sharepoint/autorizar")
     public String autorizarSharePoint() {
         try {
-            sharePointService.probarConexionDelegada();
-            return "Proceso de login iniciado. Por favor, revisa tu navegador para autorizar y luego la consola de VS Code.";
+            sharePointService.probarConexionDaemon();
+            return "Proceso de conexión Daemon iniciado. Revisa la consola para ver los resultados.";
         } catch (Exception e) {
             return "Error al intentar conectar con SharePoint: " + e.getMessage();
         }
