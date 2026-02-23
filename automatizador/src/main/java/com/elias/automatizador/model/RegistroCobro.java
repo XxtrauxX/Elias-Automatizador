@@ -1,14 +1,18 @@
 package com.elias.automatizador.model;
 
-import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
+
+import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "historial_cobros")
 @Data
 @NoArgsConstructor
+@AllArgsConstructor
 public class RegistroCobro {
 
     @Id
@@ -16,17 +20,15 @@ public class RegistroCobro {
     private Long id;
 
     private String nit;
+    private String nombreCliente;
+    private BigDecimal montoDeuda;
+    private String canal; // WhatsApp, Email
+    private String estado; // EXITOSO, FALLIDO
 
-    @Column(name = "nombre_empresa")
-    private String nombreEmpresa;
+    private LocalDateTime fechaEnvio;
 
-    @Column(name = "monto_recordado")
-    private Double montoRecordado;
-
-    private String estado;
-
-    private String canal;
-
-    @Column(name = "fecha_procesado")
-    private LocalDateTime fechaProcesado;
+    @PrePersist
+    protected void onCreate() {
+        fechaEnvio = LocalDateTime.now();
+    }
 }
