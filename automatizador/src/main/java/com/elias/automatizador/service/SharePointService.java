@@ -127,6 +127,61 @@ public class SharePointService {
         return debts;
     }
 
+    public List<DebtInfo> verificarLecturaNits(String driveId, String itemId, String sheetName) {
+        List<DebtInfo> debts = new ArrayList<>();
+        var client = getGraphClient();
+
+        try {
+            System.out.println("--- 🔍 VERIFICANDO LECTURA DE NITS (Rango A8:K100) ---");
+            RequestInformation requestInfo = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
+                    .workbook().worksheets().byWorkbookWorksheetId(sheetName)
+                    .rangeWithAddress("A8:K100").toGetRequestInformation();
+
+            java.io.InputStream stream = client.getRequestAdapter().sendPrimitive(requestInfo, null,
+                    java.io.InputStream.class);
+            String jsonContent = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+
+            JsonObject root = JsonParser.parseString(jsonContent).getAsJsonObject();
+            JsonArray values = root.getAsJsonArray("values");
+
+            for (int i = 0; i < values.size(); i++) {
+                JsonArray row = values.get(i).getAsJsonArray();
+                // Col A (0) = NIT, Col B (1) = Nombre, Col K (10) = Saldo
+                if (row.size() >= 11) {
+                    JsonElement nitElem = row.get(0);
+                    JsonElement nameElem = row.get(1);
+                    JsonElement amountElem = row.get(10);
+
+                    String nit = nitElem.isJsonNull() ? "" : nitElem.getAsString().trim();
+                    String name = nameElem.isJsonNull() ? "" : nameElem.getAsString().trim();
+                    String amountStr = amountElem.isJsonNull() ? "" : amountElem.getAsString().trim();
+
+                    if (!nit.isEmpty() && !nit.equals("0") && !amountStr.isEmpty()) {
+                        try {
+                            // Limpiar el monto de caracteres no numéricos
+                            String cleanAmount = amountStr.replaceAll("[^\\d.]", "");
+                            if (cleanAmount.isEmpty())
+                                cleanAmount = "0";
+                            BigDecimal amount = new BigDecimal(cleanAmount);
+
+                            System.out.println("📍 Fila " + (i + 8) + ": NIT=" + nit + " | Cliente=" + name
+                                    + " | Saldo=" + amount);
+
+                            debts.add(new DebtInfo(nit, amount, "L" + (i + 8))); // Escribiremos evidencia en Col L
+                        } catch (Exception ex) {
+                            // Fila no procesable
+                        }
+                    }
+                }
+            }
+            System.out.println("✅ Verificación completada. Se encontraron " + debts.size() + " registros válidos.");
+        } catch (Exception e) {
+            System.err.println("❌ Error en verificarLecturaNits: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return debts;
+    }
+
     public void writeEvidenceToSheet(String driveId, String itemId, String sheetName, String cellAddress,
             String channel) {
         var client = getGraphClient();
