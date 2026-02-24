@@ -14,12 +14,24 @@ public class TestController {
 
     private final ContactService contactService;
     private final SharePointService sharePointService;
+    private final com.elias.automatizador.service.SiigoClient siigoClient;
 
     @Value("${microsoft.graph.drive-id:}")
     private String driveId;
 
     @Value("${microsoft.graph.excel-item-id:}")
     private String itemId;
+
+    // Endpoint solicitado para comprobar saldo en Siigo
+    @GetMapping("/comprobar-saldo/{nit}")
+    public String comprobarSaldo(@PathVariable String nit) {
+        try {
+            java.math.BigDecimal saldo = siigoClient.consultarSaldoPendiente(nit);
+            return "El saldo pendiente en Siigo para el NIT " + nit + " es: $" + saldo;
+        } catch (Exception e) {
+            return "Error al consultar saldo en Siigo: " + e.getMessage();
+        }
+    }
 
     // Endpoint existente para Siigo y MySQL
     @GetMapping("/cliente/{nit}")
