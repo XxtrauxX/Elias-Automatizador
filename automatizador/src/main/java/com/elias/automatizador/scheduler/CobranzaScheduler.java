@@ -1,6 +1,10 @@
 package com.elias.automatizador.scheduler;
 
+import com.elias.automatizador.model.BotConfig;
 import com.elias.automatizador.model.DebtInfo;
+import com.elias.automatizador.model.ProcesamientoLog;
+import com.elias.automatizador.repository.BotConfigRepository;
+import com.elias.automatizador.repository.ProcesamientoLogRepository;
 import com.elias.automatizador.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,6 +22,8 @@ public class CobranzaScheduler {
     private final SiigoClient siigoClient;
     private final ContactService contactService;
     private final RegistroCobroService loggingService;
+    private final BotConfigRepository botConfigRepository;
+    private final ProcesamientoLogRepository procesamientoLogRepository;
 
     @Value("${microsoft.graph.drive-id}")
     private String driveId;
@@ -31,15 +37,35 @@ public class CobranzaScheduler {
         System.out.println("🤖 --- INICIANDO BOT ELIAS (COBRANZA MIÉRCOLES) ---");
 
         try {
-            // 1. Localizar la hoja del Miércoles
-            String sheetName = sharePointService.findWednesdaySheet(driveId, itemId);
+            // 1. Localizar la última hoja (Grupo Proyección usa la última pestaña para la
+            // carga actual)
+            String sheetName = sharePointService.findLastSheetName(driveId, itemId);
             if (sheetName == null) {
-                System.err.println("❌ No se pudo localizar la hoja de trabajo.");
+                System.err.println("❌ No se pudo localizar la última hoja del archivo.");
                 return;
             }
 
-            // 2. Leer deudas
-            List<DebtInfo> debts = sharePointService.readDebtsFromSheet(driveId, itemId, sheetName);
+            // 1.1 Control de Idempotencia: Verificar si ya procesamos esta hoja
+            if (procesamientoLogRepository.existsByNombreHoja(sheetName)) {
+                System.out.println("⛔ La hoja [" + sheetName
+                        + "] ya fue procesada anteriormente. Abortando para evitar duplicados.");
+                return;
+            }
+
+            System.out.println("📌 Nueva hoja detectada: [" + sheetName + "]. Iniciando extracción...");
+
+            // 2. Leer deudas (usando configuración dinámica)
+            BotConfig config = botConfigRepository.findById(1).orElse(null);
+            List<DebtInfo> debts;
+
+            if (config != null) {
+                System.out.println("⚙️ Usando configuración dinámica de BD: Hoja=" + config.getHojaNombre() +
+                        ", Rango=" + config.getColumnaInicio() + config.getFilaInicio() + ":" + config.getColumnaFin());
+                debts = sharePointService.readDebtsWithConfig(driveId, itemId, config, sheetName);
+            } else {
+                System.out.println("⚠️ No se encontró configuración en BD, usando valores por defecto.");
+                debts = sharePointService.readDebtsFromSheet(driveId, itemId, sheetName);
+            }
             System.out.println("📊 Deudas encontradas en Excel: " + debts.size());
 
             for (DebtInfo debt : debts) {
@@ -78,6 +104,12 @@ public class CobranzaScheduler {
                     loggingService.registrarCobro(debt.getNit(), "DESCONOCIDO", saldoPendiente, "NINGUNO", "FALLIDO");
                 }
             }
+
+            // 8. Marcar hoja como procesada (Idempotencia)
+            ProcesamientoLog log = new ProcesamientoLog();
+            log.setNombreHoja(sheetName);
+            procesamientoLogRepository.save(log);
+            System.out.println("💾 Hoja [" + sheetName + "] marcada como procesada en MySQL.");
 
             System.out.println("🚀 --- BOT ELIAS FINALIZADO CON ÉXITO ---");
 

@@ -38,16 +38,21 @@ public class SiigoAuthService {
 
         // 2. Intentamos recuperarlo de la base de datos
         Optional<SiigoToken> siigoTokenOpt = tokenRepository.findFirstByOrderByCreatedAtDesc();
-        if (siigoTokenOpt.isPresent()) {
+
+        if (siigoTokenOpt.isEmpty()) {
+            System.out.println("ℹ️ No se encontró ningún token previo en MySQL. Solicitando el primero...");
+        } else {
             SiigoToken siigoToken = siigoTokenOpt.get();
             // Comprobamos si el token tiene menos de 23 horas (margen de seguridad)
-            if (Duration.between(siigoToken.getCreatedAt(), LocalDateTime.now()).toHours() < 23) {
+            if (siigoToken.getCreatedAt() != null &&
+                    Duration.between(siigoToken.getCreatedAt(), LocalDateTime.now()).toHours() < 23) {
                 System.out.println(
                         "✅ Reutilizando token de Siigo desde MySQL (Creado el: " + siigoToken.getCreatedAt() + ")");
                 this.tokenActual = siigoToken.getAccessToken();
                 return this.tokenActual;
             } else {
-                System.out.println("⚠️ El token de Siigo en MySQL ha expirado. Solicitando uno nuevo...");
+                System.out
+                        .println("⚠️ El token de Siigo en MySQL ha expirado o no es válido. Solicitando uno nuevo...");
             }
         }
 

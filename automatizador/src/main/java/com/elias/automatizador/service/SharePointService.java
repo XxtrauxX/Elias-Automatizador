@@ -1,6 +1,7 @@
 package com.elias.automatizador.service;
 
 import com.azure.identity.ClientSecretCredentialBuilder;
+import com.elias.automatizador.model.BotConfig;
 import com.elias.automatizador.model.DebtInfo;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -10,6 +11,7 @@ import com.microsoft.graph.serviceclient.GraphServiceClient;
 import com.microsoft.graph.models.WorkbookWorksheet;
 import com.microsoft.kiota.RequestInformation;
 import com.microsoft.kiota.HttpMethod;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -32,7 +34,19 @@ public class SharePointService {
     @Value("${microsoft.graph.client-secret}")
     private String clientSecret;
 
+    @Value("${microsoft.graph.drive-id}")
+    private String driveId;
+
+    @Value("${microsoft.graph.excel-item-id}")
+    private String itemId;
+
     private GraphServiceClient graphClient;
+
+    @PostConstruct
+    public void init() {
+        System.out.println("🔧 SharePointService cargado. DriveID: " + (driveId != null ? "PRESENTE" : "MISSING")
+                + " | ItemID: " + (itemId != null ? "PRESENTE" : "MISSING"));
+    }
 
     private GraphServiceClient getGraphClient() {
         if (graphClient == null) {
@@ -61,6 +75,22 @@ public class SharePointService {
         }
     }
 
+    public String findLastSheetName(String driveId, String itemId) {
+        var client = getGraphClient();
+        try {
+            var worksheets = client.drives().byDriveId(driveId).items().byDriveItemId(itemId).workbook().worksheets()
+                    .get();
+
+            if (worksheets != null && worksheets.getValue() != null && !worksheets.getValue().isEmpty()) {
+                // Retornar el nombre de la última hoja
+                return worksheets.getValue().get(worksheets.getValue().size() - 1).getName();
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error buscando la última hoja: " + e.getMessage());
+        }
+        return null;
+    }
+
     public String findWednesdaySheet(String driveId, String itemId) {
         var client = getGraphClient();
         String expectedName = LocalDate.now().format(DateTimeFormatter.ofPattern("d-MMMM", new Locale("es", "ES")))
@@ -84,15 +114,34 @@ public class SharePointService {
         return null;
     }
 
+    public List<String> listWorksheets(String driveId, String itemId) {
+        List<String> sheetNames = new ArrayList<>();
+        var client = getGraphClient();
+        try {
+            var worksheets = client.drives().byDriveId(driveId).items().byDriveItemId(itemId).workbook().worksheets()
+                    .get();
+            if (worksheets != null && worksheets.getValue() != null) {
+                for (WorkbookWorksheet sheet : worksheets.getValue()) {
+                    sheetNames.add(sheet.getName());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error enlistando hojas: " + e.getMessage());
+        }
+        return sheetNames;
+    }
+
     public List<DebtInfo> readDebtsFromSheet(String driveId, String itemId, String sheetName) {
         List<DebtInfo> debts = new ArrayList<>();
         var client = getGraphClient();
 
         try {
             // Obtenemos los datos crudos como JSON para evitar problemas de tipos del SDK
+            // Usamos la configuración dinámica si se provee
+            String range = "A2:B100";
             RequestInformation requestInfo = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
                     .workbook().worksheets().byWorkbookWorksheetId(sheetName)
-                    .rangeWithAddress("A2:B100").toGetRequestInformation();
+                    .rangeWithAddress(range).toGetRequestInformation();
 
             // Usamos el requestAdapter para enviar la petición y recibir un InputStream o
             // String
@@ -127,15 +176,32 @@ public class SharePointService {
         return debts;
     }
 
-    public List<DebtInfo> verificarLecturaNits(String driveId, String itemId, String sheetName) {
+    public List<DebtInfo> readDebtsWithConfig(String driveId, String itemId, BotConfig config,
+            String fallbackSheetName) {
         List<DebtInfo> debts = new ArrayList<>();
         var client = getGraphClient();
 
+        String sheetNameFromDB = config.getHojaNombre();
+        String sheetName = sheetNameFromDB;
+
+        // Si la hoja en DB es la por defecto o está vacía, usamos la dinámica del
+        // miércoles
+        if (sheetName == null || sheetName.trim().isEmpty() || sheetName.equalsIgnoreCase("Cartera")) {
+            sheetName = fallbackSheetName;
+        }
+
+        String rangeAddress = config.getColumnaInicio() + config.getFilaInicio() + ":" + config.getColumnaFin() + "100";
+
         try {
-            System.out.println("--- 🔍 VERIFICANDO LECTURA DE NITS (Rango A8:K100) ---");
+            System.out.println("--- 🔍 LEYENDO DEUDAS DINÁMICAMENTE ---");
+            System.out.println("📍 Config DB: [Hoja=" + sheetNameFromDB + ", Rango=" + config.getColumnaInicio()
+                    + config.getFilaInicio() + ":" + config.getColumnaFin() + "]");
+            System.out.println("📍 Usando Hoja: [" + sheetName + "]");
+            System.out.println("📍 Rango final: [" + rangeAddress + "]");
+
             RequestInformation requestInfo = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
                     .workbook().worksheets().byWorkbookWorksheetId(sheetName)
-                    .rangeWithAddress("A8:K100").toGetRequestInformation();
+                    .rangeWithAddress(rangeAddress).toGetRequestInformation();
 
             java.io.InputStream stream = client.getRequestAdapter().sendPrimitive(requestInfo, null,
                     java.io.InputStream.class);
@@ -144,40 +210,51 @@ public class SharePointService {
             JsonObject root = JsonParser.parseString(jsonContent).getAsJsonObject();
             JsonArray values = root.getAsJsonArray("values");
 
+            if (values == null || values.isEmpty()) {
+                System.out.println("⚠️ No se encontraron datos en el rango especificado.");
+                return debts;
+            }
+
+            System.out.println("📊 Procesando " + values.size() + " filas del Excel...");
             for (int i = 0; i < values.size(); i++) {
                 JsonArray row = values.get(i).getAsJsonArray();
-                // Col A (0) = NIT, Col B (1) = Nombre, Col K (10) = Saldo
-                if (row.size() >= 11) {
+                int endColIdx = config.getColumnaFin().toUpperCase().charAt(0)
+                        - config.getColumnaInicio().toUpperCase().charAt(0);
+
+                if (row.size() > endColIdx) {
                     JsonElement nitElem = row.get(0);
-                    JsonElement nameElem = row.get(1);
-                    JsonElement amountElem = row.get(10);
+                    JsonElement amountElem = row.get(endColIdx);
 
                     String nit = nitElem.isJsonNull() ? "" : nitElem.getAsString().trim();
-                    String name = nameElem.isJsonNull() ? "" : nameElem.getAsString().trim();
                     String amountStr = amountElem.isJsonNull() ? "" : amountElem.getAsString().trim();
 
                     if (!nit.isEmpty() && !nit.equals("0") && !amountStr.isEmpty()) {
                         try {
-                            // Limpiar el monto de caracteres no numéricos
                             String cleanAmount = amountStr.replaceAll("[^\\d.]", "");
                             if (cleanAmount.isEmpty())
                                 cleanAmount = "0";
                             BigDecimal amount = new BigDecimal(cleanAmount);
 
-                            System.out.println("📍 Fila " + (i + 8) + ": NIT=" + nit + " | Cliente=" + name
-                                    + " | Saldo=" + amount);
+                            char nextCol = (char) (config.getColumnaFin().toUpperCase().charAt(0) + 1);
+                            String evidenceCell = nextCol + String.valueOf(config.getFilaInicio() + i);
 
-                            debts.add(new DebtInfo(nit, amount, "L" + (i + 8))); // Escribiremos evidencia en Col L
+                            debts.add(new DebtInfo(nit, amount, evidenceCell));
+                            System.out.println("✅ Encontrado: NIT=" + nit + " | Saldo=" + amount);
                         } catch (Exception ex) {
-                            // Fila no procesable
                         }
                     }
                 }
             }
-            System.out.println("✅ Verificación completada. Se encontraron " + debts.size() + " registros válidos.");
+            System.out.println("🎯 Total deudas encontradas: " + debts.size());
         } catch (Exception e) {
-            System.err.println("❌ Error en verificarLecturaNits: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("❌ Error en readDebtsWithConfig: " + e.getMessage());
+            if (e.getMessage() != null && e.getMessage().contains("404")) {
+                System.out.println("🔍 Hojas disponibles en el libro:");
+                listWorksheets(driveId, itemId).forEach(name -> System.out.println("  - " + name));
+            } else if (e.getMessage() != null && e.getMessage().contains("Token not found in the cache")) {
+                System.err.println("🚨 Error de caché MSAL: Reiniciando cliente de Graph...");
+                this.graphClient = null;
+            }
         }
         return debts;
     }

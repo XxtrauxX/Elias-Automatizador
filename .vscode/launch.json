@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "AutomatizadorApplication",
+            "request": "launch",
+            "mainClass": "com.elias.automatizador.AutomatizadorApplication",
+            "projectName": "automatizador"
+        }
+    ]
+}
