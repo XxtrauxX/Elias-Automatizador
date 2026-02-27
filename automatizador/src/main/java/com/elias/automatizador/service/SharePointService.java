@@ -3,6 +3,8 @@ package com.elias.automatizador.service;
 import com.azure.identity.ClientSecretCredentialBuilder;
 import com.elias.automatizador.model.BotConfig;
 import com.elias.automatizador.model.DebtInfo;
+import com.elias.automatizador.model.ExtraccionRegistro;
+import com.elias.automatizador.repository.ExtraccionRegistroRepository;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -12,17 +14,21 @@ import com.microsoft.graph.models.WorkbookWorksheet;
 import com.microsoft.kiota.RequestInformation;
 import com.microsoft.kiota.HttpMethod;
 import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
 public class SharePointService {
 
     @Value("${microsoft.graph.tenant-id}")
@@ -39,6 +45,8 @@ public class SharePointService {
 
     @Value("${microsoft.graph.excel-item-id}")
     private String itemId;
+
+    private final ExtraccionRegistroRepository extraccionRegistroRepository;
 
     private GraphServiceClient graphClient;
 
@@ -182,22 +190,27 @@ public class SharePointService {
         var client = getGraphClient();
 
         String sheetNameFromDB = config.getHojaNombre();
-        String sheetName = sheetNameFromDB;
+        String sheetName = (sheetNameFromDB == null || sheetNameFromDB.trim().isEmpty()
+                || sheetNameFromDB.equalsIgnoreCase("Cartera"))
+                        ? fallbackSheetName
+                        : sheetNameFromDB;
 
-        // Si la hoja en DB es la por defecto o está vacía, usamos la dinámica del
-        // miércoles
-        if (sheetName == null || sheetName.trim().isEmpty() || sheetName.equalsIgnoreCase("Cartera")) {
-            sheetName = fallbackSheetName;
-        }
-
-        String rangeAddress = config.getColumnaInicio() + config.getFilaInicio() + ":" + config.getColumnaFin() + "100";
+        String batchId = "BATCH-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"));
 
         try {
-            System.out.println("--- 🔍 LEYENDO DEUDAS DINÁMICAMENTE ---");
-            System.out.println("📍 Config DB: [Hoja=" + sheetNameFromDB + ", Rango=" + config.getColumnaInicio()
-                    + config.getFilaInicio() + ":" + config.getColumnaFin() + "]");
-            System.out.println("📍 Usando Hoja: [" + sheetName + "]");
-            System.out.println("📍 Rango final: [" + rangeAddress + "]");
+            System.out.println("--- 🔍 LEYENDO DEUDAS DINÁMICAMENTE (CON PERSISTENCIA) ---");
+            System.out.println("📍 Hoja: [" + sheetName + "] | Lote: [" + batchId + "]");
+
+            // 1. Detectar última fila dinámicamente
+            int lastRow = getLastRow(driveId, itemId, sheetName);
+            if (lastRow < 8) {
+                System.out.println("⚠️ No hay datos suficientes (última fila: " + lastRow + ").");
+                return debts;
+            }
+
+            // 2. Definir rango A8:O{lastRow}
+            String rangeAddress = "A8:O" + lastRow;
+            System.out.println("📍 Rango final detectado: [" + rangeAddress + "]");
 
             RequestInformation requestInfo = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
                     .workbook().worksheets().byWorkbookWorksheetId(sheetName)
@@ -215,48 +228,92 @@ public class SharePointService {
                 return debts;
             }
 
+            List<ExtraccionRegistro> registrosParaPersistir = new ArrayList<>();
             System.out.println("📊 Procesando " + values.size() + " filas del Excel...");
+
             for (int i = 0; i < values.size(); i++) {
                 JsonArray row = values.get(i).getAsJsonArray();
-                int endColIdx = config.getColumnaFin().toUpperCase().charAt(0)
-                        - config.getColumnaInicio().toUpperCase().charAt(0);
 
-                if (row.size() > endColIdx) {
-                    JsonElement nitElem = row.get(0);
-                    JsonElement amountElem = row.get(endColIdx);
-
-                    String nit = nitElem.isJsonNull() ? "" : nitElem.getAsString().trim();
-                    String amountStr = amountElem.isJsonNull() ? "" : amountElem.getAsString().trim();
-
-                    if (!nit.isEmpty() && !nit.equals("0") && !amountStr.isEmpty()) {
-                        try {
-                            String cleanAmount = amountStr.replaceAll("[^\\d.]", "");
-                            if (cleanAmount.isEmpty())
-                                cleanAmount = "0";
-                            BigDecimal amount = new BigDecimal(cleanAmount);
-
-                            char nextCol = (char) (config.getColumnaFin().toUpperCase().charAt(0) + 1);
-                            String evidenceCell = nextCol + String.valueOf(config.getFilaInicio() + i);
-
-                            debts.add(new DebtInfo(nit, amount, evidenceCell));
-                            System.out.println("✅ Encontrado: NIT=" + nit + " | Saldo=" + amount);
-                        } catch (Exception ex) {
-                        }
+                // Asegurar longitud fija de 15 posiciones (A-O)
+                List<String> rowData = new ArrayList<>();
+                for (int j = 0; j < 15; j++) {
+                    if (j < row.size()) {
+                        JsonElement elem = row.get(j);
+                        rowData.add(elem.isJsonNull() ? "" : elem.getAsString().trim());
+                    } else {
+                        rowData.add("");
                     }
                 }
+
+                String nit = rowData.get(0); // Columna A
+                String montoVencidoStr = rowData.get(12); // Columna M (índice 12)
+
+                if (nit == null || nit.isEmpty() || nit.equals("0")) {
+                    continue;
+                }
+
+                BigDecimal amount = BigDecimal.ZERO;
+                try {
+                    String cleanAmount = montoVencidoStr.replaceAll("[^\\d.]", "");
+                    if (!cleanAmount.isEmpty()) {
+                        amount = new BigDecimal(cleanAmount);
+                    }
+                } catch (Exception ex) {
+                    // Ignorar error de parseo
+                }
+
+                // Generar dirección de celda para evidencia (Columna P es el siguiente a O)
+                String evidenceCell = "P" + (8 + i);
+                debts.add(new DebtInfo(nit, amount, evidenceCell));
+
+                // Preparar para persistir en BD
+                ExtraccionRegistro registro = ExtraccionRegistro.builder()
+                        .batchId(batchId)
+                        .nit(nit)
+                        .montoVencido(amount)
+                        .metadata(new com.google.gson.Gson().toJson(rowData))
+                        .build();
+                registrosParaPersistir.add(registro);
+
+                System.out.println("✅ Encontrado: NIT=" + nit + " | Saldo=" + amount);
             }
+
+            // 3. Persistencia por lote en BD
+            if (!registrosParaPersistir.isEmpty()) {
+                extraccionRegistroRepository.saveAll(registrosParaPersistir);
+                System.out.println("[AUDITORÍA] Lote " + batchId + " persistido en DB. " + registrosParaPersistir.size()
+                        + " registros.");
+            }
+
             System.out.println("🎯 Total deudas encontradas: " + debts.size());
         } catch (Exception e) {
             System.err.println("❌ Error en readDebtsWithConfig: " + e.getMessage());
-            if (e.getMessage() != null && e.getMessage().contains("404")) {
-                System.out.println("🔍 Hojas disponibles en el libro:");
-                listWorksheets(driveId, itemId).forEach(name -> System.out.println("  - " + name));
-            } else if (e.getMessage() != null && e.getMessage().contains("Token not found in the cache")) {
-                System.err.println("🚨 Error de caché MSAL: Reiniciando cliente de Graph...");
+            if (e.getMessage() != null && e.getMessage().contains("Token not found")) {
                 this.graphClient = null;
             }
         }
         return debts;
+    }
+
+    private int getLastRow(String driveId, String itemId, String sheetName) {
+        try {
+            var client = getGraphClient();
+            RequestInformation usedRangeRequest = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
+                    .workbook().worksheets().byWorkbookWorksheetId(sheetName)
+                    .usedRange().toGetRequestInformation();
+
+            java.io.InputStream stream = client.getRequestAdapter().sendPrimitive(usedRangeRequest, null,
+                    java.io.InputStream.class);
+            String json = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            String address = root.get("address").getAsString();
+            String rangePart = address.contains("!") ? address.split("!")[1] : address;
+            String lastRowStr = rangePart.replaceAll("[^0-9]+$", "").replaceAll("^.*:", "").replaceAll("[^0-9]", "");
+            return Integer.parseInt(lastRowStr);
+        } catch (Exception e) {
+            System.err.println("❌ Error detectando última fila: " + e.getMessage());
+            return 100; // Fallback seguro
+        }
     }
 
     public void writeEvidenceToSheet(String driveId, String itemId, String sheetName, String cellAddress,
@@ -282,5 +339,21 @@ public class SharePointService {
         } catch (Exception e) {
             System.err.println("❌ Error escribiendo evidencia en Excel: " + e.getMessage());
         }
+    }
+
+    /**
+     * Procesa una extracción por lote desde la fila 8 hasta la última con contenido
+     * (UsedRange).
+     * Extrae columnas A-O y persiste en base de datos.
+     */
+    public String processBatchExtraction(String driveId, String itemId, String sheetName) {
+        BotConfig dummyConfig = new BotConfig();
+        dummyConfig.setHojaNombre(sheetName);
+        dummyConfig.setFilaInicio(8);
+        dummyConfig.setColumnaInicio("A");
+        dummyConfig.setColumnaFin("O");
+
+        List<DebtInfo> result = readDebtsWithConfig(driveId, itemId, dummyConfig, sheetName);
+        return "[TEST] Proceso completado. Registros en lista: " + result.size();
     }
 }

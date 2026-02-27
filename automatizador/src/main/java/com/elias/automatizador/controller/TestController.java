@@ -96,4 +96,18 @@ public class TestController {
             return "Error al intentar conectar con SharePoint: " + e.getMessage();
         }
     }
+
+    // Nuevo endpoint para probar la extracción por lote dinámica
+    @GetMapping("/sharepoint/procesar-lote")
+    public String procesarLote() {
+        try {
+            String sheetName = sharePointService.findLastSheetName(driveId, itemId);
+            if (sheetName == null) {
+                return "Error: No se pudo detectar la última hoja.";
+            }
+            return sharePointService.processBatchExtraction(driveId, itemId, sheetName);
+        } catch (Exception e) {
+            return "Error en el procesamiento del lote: " + e.getMessage();
+        }
+    }
 }
