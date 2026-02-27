@@ -25,7 +25,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -234,19 +233,22 @@ public class SharePointService {
             for (int i = 0; i < values.size(); i++) {
                 JsonArray row = values.get(i).getAsJsonArray();
 
-                // Asegurar longitud fija de 15 posiciones (A-O)
-                List<String> rowData = new ArrayList<>();
+                // Serialización Estructurada: Objeto JSON con llaves A-O
+                JsonObject rowMetadata = new JsonObject();
                 for (int j = 0; j < 15; j++) {
+                    char colLetter = (char) ('A' + j);
+                    String colKey = String.valueOf(colLetter);
+
                     if (j < row.size()) {
                         JsonElement elem = row.get(j);
-                        rowData.add(elem.isJsonNull() ? "" : elem.getAsString().trim());
+                        rowMetadata.addProperty(colKey, elem.isJsonNull() ? "" : elem.getAsString().trim());
                     } else {
-                        rowData.add("");
+                        rowMetadata.addProperty(colKey, "");
                     }
                 }
 
-                String nit = rowData.get(0); // Columna A
-                String montoVencidoStr = rowData.get(12); // Columna M (índice 12)
+                String nit = rowMetadata.get("A").getAsString(); // Columna A
+                String montoVencidoStr = rowMetadata.get("M").getAsString(); // Columna M
 
                 if (nit == null || nit.isEmpty() || nit.equals("0")) {
                     continue;
@@ -271,7 +273,7 @@ public class SharePointService {
                         .batchId(batchId)
                         .nit(nit)
                         .montoVencido(amount)
-                        .metadata(new com.google.gson.Gson().toJson(rowData))
+                        .metadata(new com.google.gson.Gson().toJson(rowMetadata))
                         .build();
                 registrosParaPersistir.add(registro);
 
