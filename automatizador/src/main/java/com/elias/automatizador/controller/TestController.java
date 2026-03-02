@@ -2,7 +2,6 @@ package com.elias.automatizador.controller;
 
 import com.elias.automatizador.model.BotConfig;
 import com.elias.automatizador.model.Contacto;
-import com.elias.automatizador.model.ProcesamientoLog;
 import com.elias.automatizador.repository.BotConfigRepository;
 import com.elias.automatizador.repository.SiigoTokenRepository;
 import com.elias.automatizador.repository.ProcesamientoLogRepository;
@@ -64,15 +63,7 @@ public class TestController {
             long processedSheetsCount = procesamientoLogRepository != null ? procesamientoLogRepository.count() : -1;
             boolean alreadyProcessed = procesamientoLogRepository.existsByNombreHoja(sheetName);
 
-            sharePointService.readDebtsWithConfig(driveId, itemId, config, sheetName);
-
-            // Guardar log si no existe (para que el usuario vea que funciona)
-            if (!alreadyProcessed) {
-                ProcesamientoLog log = new ProcesamientoLog();
-                log.setNombreHoja(sheetName);
-                procesamientoLogRepository.save(log);
-                System.out.println("💾 Hoja [" + sheetName + "] registrada desde el TestController.");
-            }
+            sharePointService.readDebtsWithConfig(driveId, itemId, config, sheetName, null);
 
             return "Verificación terminada. \n" +
                     "Última hoja detectada: " + sheetName + "\n" +

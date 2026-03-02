@@ -10,4 +10,6 @@ public interface ProcesamientoLogRepository extends JpaRepository<ProcesamientoL
     Optional<ProcesamientoLog> findByNombreHoja(String nombreHoja);
 
     boolean existsByNombreHoja(String nombreHoja);
+
+    boolean existsByNombreHojaIgnoreCase(String nombreHoja);
 }

@@ -50,6 +50,7 @@ public class SharePointService {
 
     private final ExtraccionRegistroRepository extraccionRegistroRepository;
     private final ProcesamientoLogRepository procesamientoLogRepository;
+    private final WebhookService webhookService;
 
     private GraphServiceClient graphClient;
 
@@ -188,7 +189,7 @@ public class SharePointService {
     }
 
     public List<DebtInfo> readDebtsWithConfig(String driveId, String itemId, BotConfig config,
-            String fallbackSheetName) {
+            String fallbackSheetName, String batchId) {
         List<DebtInfo> debts = new ArrayList<>();
         var client = getGraphClient();
 
@@ -198,7 +199,16 @@ public class SharePointService {
                         ? fallbackSheetName
                         : sheetNameFromDB;
 
-        String batchId = "BATCH-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"));
+        if (batchId == null) {
+            batchId = "BATCH-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"));
+        }
+
+        // Safety CHECK: Prevent extraction if already processed
+        if (procesamientoLogRepository.existsByNombreHojaIgnoreCase(sheetName)) {
+            System.out.println(
+                    "⛔ [SEGURIDAD] La hoja [" + sheetName + "] ya está en la base de datos. Saltando extracción.");
+            return debts;
+        }
 
         try {
             System.out.println("--- 🔍 LEYENDO DEUDAS DINÁMICAMENTE (CON PERSISTENCIA) ---");
@@ -289,6 +299,17 @@ public class SharePointService {
                 extraccionRegistroRepository.saveAll(registrosParaPersistir);
                 System.out.println("[AUDITORÍA] Lote " + batchId + " persistido en DB. " + registrosParaPersistir.size()
                         + " registros.");
+
+                // 4. Registrar hoja como procesada (Consolidado)
+                try {
+                    ProcesamientoLog log = new ProcesamientoLog();
+                    log.setNombreHoja(sheetName);
+                    procesamientoLogRepository.save(log);
+                    System.out
+                            .println("✅ Hoja [" + sheetName + "] registrada como procesada en el flujo de extracción.");
+                } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                    System.out.println("ℹ️ La hoja [" + sheetName + "] ya estaba registrada (ignorado en save).");
+                }
             }
 
             System.out.println("🎯 Total deudas encontradas: " + debts.size());
@@ -354,11 +375,21 @@ public class SharePointService {
      */
     @Transactional
     public String processBatchExtraction(String driveId, String itemId, String sheetName) {
-        // 1. Bloqueo de duplicados al puro principio
-        if (procesamientoLogRepository.existsByNombreHoja(sheetName)) {
-            System.out.println("⚠️ Abortando extracción: La hoja [" + sheetName + "] ya fue procesada anteriormente.");
+        if (sheetName != null)
+            sheetName = sheetName.trim();
+
+        System.out.println("🔍 Verificando duplicados para la hoja: [" + sheetName + "]");
+
+        // 1. Bloqueo de duplicados al puro principio (Reinforced)
+        if (procesamientoLogRepository.existsByNombreHojaIgnoreCase(sheetName)) {
+            System.out.println("⚠️ Abortando extracción: La hoja [" + sheetName
+                    + "] ya fue procesada anteriormente (IgnoreCase check).");
             return "La hoja " + sheetName + " ya fue procesada anteriormente. No se realizaron cambios.";
         }
+
+        System.out.println("🚀 No se encontró duplicado. Iniciando extracción para: [" + sheetName + "]");
+
+        String batchId = "BATCH-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"));
 
         BotConfig dummyConfig = new BotConfig();
         dummyConfig.setHojaNombre(sheetName);
@@ -366,15 +397,15 @@ public class SharePointService {
         dummyConfig.setColumnaInicio("A");
         dummyConfig.setColumnaFin("O");
 
-        List<DebtInfo> result = readDebtsWithConfig(driveId, itemId, dummyConfig, sheetName);
+        List<DebtInfo> result = readDebtsWithConfig(driveId, itemId, dummyConfig, sheetName, batchId);
 
-        // 2. Registrar hoja como procesada al final de la transacción
+        // 2. Notificación vía Webhook a n8n
         if (!result.isEmpty()) {
-            ProcesamientoLog log = new ProcesamientoLog();
-            log.setNombreHoja(sheetName);
-            procesamientoLogRepository.save(log);
-            System.out.println("✅ Hoja [" + sheetName + "] registrada como procesada.");
-            return "Proceso completado. Registros extraídos: " + result.size() + ". Hoja marcada como procesada.";
+            // Notificación vía Webhook a n8n
+            webhookService.sendExtractionNotification(batchId, sheetName, result.size());
+
+            return "Proceso completado. Registros extraídos: " + result.size()
+                    + ". Hoja marcada como procesada y aviso enviado.";
         } else {
             return "Proceso completado. No se encontraron registros válidos para extraer.";
         }

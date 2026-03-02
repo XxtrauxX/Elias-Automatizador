@@ -2,7 +2,6 @@ package com.elias.automatizador.scheduler;
 
 import com.elias.automatizador.model.BotConfig;
 import com.elias.automatizador.model.DebtInfo;
-import com.elias.automatizador.model.ProcesamientoLog;
 import com.elias.automatizador.repository.BotConfigRepository;
 import com.elias.automatizador.repository.ProcesamientoLogRepository;
 import com.elias.automatizador.service.*;
@@ -46,9 +45,9 @@ public class CobranzaScheduler {
             }
 
             // 1.1 Control de Idempotencia: Verificar si ya procesamos esta hoja
-            if (procesamientoLogRepository.existsByNombreHoja(sheetName)) {
+            if (procesamientoLogRepository.existsByNombreHojaIgnoreCase(sheetName)) {
                 System.out.println("⛔ La hoja [" + sheetName
-                        + "] ya fue procesada anteriormente. Abortando para evitar duplicados.");
+                        + "] ya fue procesada anteriormente (IgnoreCase). Abortando.");
                 return;
             }
 
@@ -61,7 +60,7 @@ public class CobranzaScheduler {
             if (config != null) {
                 System.out.println("⚙️ Usando configuración dinámica de BD: Hoja=" + config.getHojaNombre() +
                         ", Rango=" + config.getColumnaInicio() + config.getFilaInicio() + ":" + config.getColumnaFin());
-                debts = sharePointService.readDebtsWithConfig(driveId, itemId, config, sheetName);
+                debts = sharePointService.readDebtsWithConfig(driveId, itemId, config, sheetName, null);
             } else {
                 System.out.println("⚠️ No se encontró configuración en BD, usando valores por defecto.");
                 debts = sharePointService.readDebtsFromSheet(driveId, itemId, sheetName);
@@ -104,12 +103,6 @@ public class CobranzaScheduler {
                     loggingService.registrarCobro(debt.getNit(), "DESCONOCIDO", saldoPendiente, "NINGUNO", "FALLIDO");
                 }
             }
-
-            // 8. Marcar hoja como procesada (Idempotencia)
-            ProcesamientoLog log = new ProcesamientoLog();
-            log.setNombreHoja(sheetName);
-            procesamientoLogRepository.save(log);
-            System.out.println("💾 Hoja [" + sheetName + "] marcada como procesada en MySQL.");
 
             System.out.println("🚀 --- BOT ELIAS FINALIZADO CON ÉXITO ---");
 
