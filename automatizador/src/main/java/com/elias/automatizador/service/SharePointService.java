@@ -17,6 +17,9 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.elias.automatizador.repository.ProcesamientoLogRepository;
+import com.elias.automatizador.model.ProcesamientoLog;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -46,6 +49,7 @@ public class SharePointService {
     private String itemId;
 
     private final ExtraccionRegistroRepository extraccionRegistroRepository;
+    private final ProcesamientoLogRepository procesamientoLogRepository;
 
     private GraphServiceClient graphClient;
 
@@ -348,7 +352,14 @@ public class SharePointService {
      * (UsedRange).
      * Extrae columnas A-O y persiste en base de datos.
      */
+    @Transactional
     public String processBatchExtraction(String driveId, String itemId, String sheetName) {
+        // 1. Bloqueo de duplicados al puro principio
+        if (procesamientoLogRepository.existsByNombreHoja(sheetName)) {
+            System.out.println("⚠️ Abortando extracción: La hoja [" + sheetName + "] ya fue procesada anteriormente.");
+            return "La hoja " + sheetName + " ya fue procesada anteriormente. No se realizaron cambios.";
+        }
+
         BotConfig dummyConfig = new BotConfig();
         dummyConfig.setHojaNombre(sheetName);
         dummyConfig.setFilaInicio(8);
@@ -356,6 +367,16 @@ public class SharePointService {
         dummyConfig.setColumnaFin("O");
 
         List<DebtInfo> result = readDebtsWithConfig(driveId, itemId, dummyConfig, sheetName);
-        return "[TEST] Proceso completado. Registros en lista: " + result.size();
+
+        // 2. Registrar hoja como procesada al final de la transacción
+        if (!result.isEmpty()) {
+            ProcesamientoLog log = new ProcesamientoLog();
+            log.setNombreHoja(sheetName);
+            procesamientoLogRepository.save(log);
+            System.out.println("✅ Hoja [" + sheetName + "] registrada como procesada.");
+            return "Proceso completado. Registros extraídos: " + result.size() + ". Hoja marcada como procesada.";
+        } else {
+            return "Proceso completado. No se encontraron registros válidos para extraer.";
+        }
     }
 }
