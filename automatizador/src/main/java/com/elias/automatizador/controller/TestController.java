@@ -41,7 +41,8 @@ public class TestController {
         }
     }
 
-    // Endpoint existente para Siigo y MySQL
+    // Endpoint existente para Siigo y MySQL (OBSOLETO: Usar /api/v1/contacto/{nit})
+    @Deprecated
     @GetMapping("/cliente/{nit}")
     public Contacto probarConexion(@PathVariable String nit) {
         return contactService.obtenerContactoHibrido(nit);
