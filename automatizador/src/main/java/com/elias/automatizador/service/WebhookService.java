@@ -12,7 +12,7 @@ import java.util.Map;
 public class WebhookService {
 
     private final WebClient.Builder webClientBuilder;
-    private final String WEBHOOK_URL = "http://31.97.140.162:7890/webhook-test/extraccion-completada";
+    private final String WEBHOOK_URL = "https://elias.grupoinnovacion.online/webhook-test/extraccion-completada";
 
     public void sendExtractionNotification(String batchId, String sheetName, int totalRecords) {
         System.out.println("📤 Enviando notificación Webhook a n8n... Lote: " + batchId);
