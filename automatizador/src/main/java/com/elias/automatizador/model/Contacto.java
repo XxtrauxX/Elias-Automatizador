@@ -29,4 +29,7 @@ public class Contacto {
 
     @Column(name = "fecha_actualizacion")
     private LocalDateTime fechaActualizacion;
+
+    @Column(name = "ultima_gestion")
+    private String ultimaGestion;
 }

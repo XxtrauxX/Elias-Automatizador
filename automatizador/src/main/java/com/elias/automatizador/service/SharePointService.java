@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.elias.automatizador.repository.ProcesamientoLogRepository;
 import com.elias.automatizador.model.ProcesamientoLog;
+import com.elias.automatizador.repository.ContactoRepository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -48,9 +49,11 @@ public class SharePointService {
     @Value("${microsoft.graph.excel-item-id}")
     private String itemId;
 
+
     private final ExtraccionRegistroRepository extraccionRegistroRepository;
     private final ProcesamientoLogRepository procesamientoLogRepository;
     private final WebhookService webhookService;
+    private final ContactoRepository contactoRepository;
 
     private GraphServiceClient graphClient;
 
@@ -432,6 +435,14 @@ public class SharePointService {
                         matchCount++;
                     }
                 }
+            }
+            
+            if (matchCount > 0) {
+                contactoRepository.findByNit(nit).ifPresent(contacto -> {
+                    contacto.setUltimaGestion(message);
+                    contacto.setFechaActualizacion(LocalDateTime.now());
+                    contactoRepository.save(contacto);
+                });
             }
             
             if (matchCount == 0) {
