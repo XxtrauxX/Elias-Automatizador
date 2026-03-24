@@ -18,6 +18,24 @@ public class SiigoInvoiceDTO {
     @JsonProperty("total")
     private BigDecimal total;
 
+    @JsonProperty("public_url")
+    private String publicUrl;
+
+    @JsonProperty("date")
+    private String date;
+
+    @JsonProperty("due_date")
+    private String dueDate;
+    
+    @JsonProperty("currency")
+    private Currency currency;
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Currency {
+        private String code;
+    }
+
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class SiigoInvoiceResponse {
