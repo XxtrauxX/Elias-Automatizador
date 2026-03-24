@@ -21,6 +21,7 @@ public class MotorCobranzaService {
     private final WebClient.Builder webClientBuilder;
     private final TemplateEngine templateEngine;
     private final GraphEmailService graphEmailService;
+    private final SharePointService sharePointService;
 
     public void procesarCobranza(CobranzaRequestDTO request) {
         System.out.println("⚡ Iniciando procesamiento de cobranza para NIT: " + request.getNit());
@@ -88,6 +89,11 @@ public class MotorCobranzaService {
             graphEmailService.sendEmail(request.getDestinatario(), asunto, htmlContent);
 
             System.out.println("✅ Cobranza procesada exitosamente para: " + request.getDestinatario());
+
+            // 5. Registrar trazabilidad en SharePoint (Asincrónicamente para no bloquear la respuesta)
+            java.util.concurrent.CompletableFuture.runAsync(() -> {
+                sharePointService.registrarTrazabilidadCorreo(request.getNit(), "correo");
+            });
 
         } catch (Exception e) {
             System.err.println("❌ Error en el proceso de cobranza para NIT " + request.getNit() + ": " + e.getMessage());

@@ -358,7 +358,8 @@ public class SharePointService {
                     .rangeWithAddress(cellAddress).toGetRequestInformation();
 
             requestInfo.httpMethod = HttpMethod.PATCH;
-            requestInfo.setContentFromScalar(client.getRequestAdapter(), "application/json", body);
+            byte[] payloadBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            requestInfo.setStreamContent(new java.io.ByteArrayInputStream(payloadBytes), "application/json");
 
             client.getRequestAdapter().sendPrimitive(requestInfo, null, Void.class);
 
@@ -367,6 +368,80 @@ public class SharePointService {
             System.err.println("❌ Error escribiendo evidencia en Excel: " + e.getMessage());
         }
     }
+
+    public void registrarTrazabilidadCorreo(String nit, String channel) {
+        if (nit == null || nit.trim().isEmpty()) return;
+        
+        String sheetName = procesamientoLogRepository.findTopByOrderByFechaProcesamientoDesc()
+                .map(com.elias.automatizador.model.ProcesamientoLog::getNombreHoja)
+                .map(String::trim)
+                .orElse(null);
+                
+        if (sheetName == null) {
+            System.err.println("❌ No se encontró una hoja previamente procesada para registrar trazabilidad.");
+            return;
+        }
+        
+        try {
+            var client = getGraphClient();
+            
+            int lastRow = getLastRow(driveId, itemId, sheetName);
+            if (lastRow < 8) return;
+            
+            String rangeAddress = "A8:A" + lastRow;
+            RequestInformation requestInfo = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
+                    .workbook().worksheets().byWorkbookWorksheetId(sheetName)
+                    .rangeWithAddress(rangeAddress).toGetRequestInformation();
+            
+            java.io.InputStream stream = client.getRequestAdapter().sendPrimitive(requestInfo, null, java.io.InputStream.class);
+            String jsonContent = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            JsonObject root = JsonParser.parseString(jsonContent).getAsJsonObject();
+            JsonArray values = root.getAsJsonArray("values");
+            
+            if (values == null || values.isEmpty()) return;
+            
+            String date = LocalDate.now().format(DateTimeFormatter.ofPattern("d 'de' MMMM", new Locale("es", "ES")));
+            String message = date + ": enviado por " + channel;
+            
+            JsonObject bodyObj = new JsonObject();
+            JsonArray rowsArr = new JsonArray();
+            JsonArray colsArr = new JsonArray();
+            colsArr.add(message);
+            rowsArr.add(colsArr);
+            bodyObj.add("values", rowsArr);
+            String body = bodyObj.toString();
+            
+            int matchCount = 0;
+            for (int i = 0; i < values.size(); i++) {
+                JsonArray row = values.get(i).getAsJsonArray();
+                if (row.size() > 0 && !row.get(0).isJsonNull()) {
+                    String rowNit = row.get(0).getAsString().trim();
+                    if (nit.equals(rowNit)) {
+                        int rowIndex = 8 + i;
+                        String cellAddress = "C" + rowIndex;
+                        
+                        RequestInformation patchReq = client.drives().byDriveId(driveId).items().byDriveItemId(itemId)
+                                .workbook().worksheets().byWorkbookWorksheetId(sheetName)
+                                .rangeWithAddress(cellAddress).toGetRequestInformation();
+                        patchReq.httpMethod = HttpMethod.PATCH;
+                        byte[] payloadBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        patchReq.setStreamContent(new java.io.ByteArrayInputStream(payloadBytes), "application/json");
+                        
+                        client.getRequestAdapter().sendPrimitive(patchReq, null, Void.class);
+                        System.out.println("📝 Trazabilidad escrita exitosamente en " + cellAddress + " para NIT: " + nit);
+                        matchCount++;
+                    }
+                }
+            }
+            
+            if (matchCount == 0) {
+                System.out.println("⚠️ No se encontraron filas para el NIT " + nit + " en la hoja " + sheetName);
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error escribiendo trazabilidad en Excel para NIT " + nit + ": " + e.getMessage());
+        }
+    }
+
 
     /**
      * Procesa una extracción por lote desde la fila 8 hasta la última con contenido

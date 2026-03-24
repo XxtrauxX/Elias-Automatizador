@@ -9,6 +9,8 @@ import java.util.Optional;
 public interface ProcesamientoLogRepository extends JpaRepository<ProcesamientoLog, Long> {
     Optional<ProcesamientoLog> findByNombreHoja(String nombreHoja);
 
+    Optional<ProcesamientoLog> findTopByOrderByFechaProcesamientoDesc();
+
     boolean existsByNombreHoja(String nombreHoja);
 
     boolean existsByNombreHojaIgnoreCase(String nombreHoja);
