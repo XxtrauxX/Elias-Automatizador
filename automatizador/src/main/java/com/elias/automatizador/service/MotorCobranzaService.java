@@ -71,7 +71,14 @@ public class MotorCobranzaService {
             // 3. Renderizar Plantilla HTML con Thymeleaf
             Context context = new Context();
             context.setVariable("nombre", request.getNombre());
-            context.setVariable("mensajeIA", request.getMensajeIA());
+            
+            String mensajeIA = request.getMensajeIA();
+            if (mensajeIA != null) {
+                mensajeIA = mensajeIA.replace("\n", "<br>");
+                mensajeIA = mensajeIA.replaceAll("\\*\\*(.*?)\\*\\*", "<strong>$1</strong>");
+            }
+            context.setVariable("mensajeIA", mensajeIA);
+            
             context.setVariable("facturas", facturasAProcesar);
 
             String htmlContent = templateEngine.process("email-cobranza", context);
